@@ -278,12 +278,17 @@ You are an expert automated grading assistant. Evaluate the handwritten text pro
 {max_points} Points
 
 ### Output Format Requirement:
-**Transcribed Text:** [Provide a precise text transcription of what was written]
-**Assigned Score:** [Score] / {max_points}
-**Reasoning/Feedback:** [Give clear, actionable explanation for the points earned or missed based on the rubric criteria]
-"""
-            
-            try:
+Return ONLY a raw JSON object with no explanations, markdown code blocks, or extra text.
+
+The JSON must follow this exact structure:
+{
+  "student_name": "Student Full Name (or Unidentified)",
+  "subject": "Subject Name (or General)",
+  "date": "YYYY-MM-DD (or current date)",
+  "final_score": "Total Score (e.g. 18/20)"
+}
+""
+          try:
                 response = client.chat.completions.create(
                     model="qwen/qwen3.6-27b",
                     messages=[
@@ -307,7 +312,7 @@ You are an expert automated grading assistant. Evaluate the handwritten text pro
                     f.write(f"TIMESTAMP: {timestamp}\n")
                     f.write(f"STUDENT: {student_name}\n")
                     f.write(f"-----------------------------------------\n")
-                    f.write(f"{grading_result}\n")
+                    f.write(f"RECORD: {grading_result}\n")
                     f.write(f"=========================================\n")
                     f.flush()
                     os.fsync(f.fileno())
@@ -332,3 +337,4 @@ You are an expert automated grading assistant. Evaluate the handwritten text pro
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
