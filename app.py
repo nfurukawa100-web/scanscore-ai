@@ -138,7 +138,7 @@ The JSON must follow this exact structure:
         img_url = f"data:image/jpeg;base64,{base64_image}"
 
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
+            model="llama-3.2-11b-vision-preview",
             messages=[
                 {
                     "role": "user",
