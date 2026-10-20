@@ -32,29 +32,27 @@ HTML_TEMPLATE = """
         button:hover { background-color: #003d82; }
         .result, .history { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
         .error { color: red; font-weight: bold; }
+        
         #loading-overlay {
-    display: none;
-    position: fixed;
-    top: 0; 
-    left: 0; 
-    width: 100%; 
-    height: 100%;
-    background: rgba(255, 255, 255, 0.9);
-    z-index: 9999;
-    text-align: center;
-    padding-top: 35vh;
-    font-size: 22px;
-    font-weight: bold;
-    color: #0056b3;
-}
-
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.9);
+            z-index: 9999;
+            text-align: center;
+            padding-top: 35vh;
+            font-size: 22px;
+            font-weight: bold;
+            color: #0056b3;
+        }
     </style>
 </head>
 <body>
     <div id="loading-overlay">
-    ⏳ Evaluating Answer Sheet...<br>
-    <span style="font-size: 14px; font-weight: normal; color: #666;">Please wait, AI is scanning the image...</span>
-</div>
+        ⏳ Evaluating Answer Sheet...<br>
+        <span style="font-size: 14px; font-weight: normal; color: #666;">Please wait, AI is scanning the image...</span>
+    </div>
+
     <div class="container">
         <h1>ScanScore AI Automated Grading</h1>
         <form action="/" method="post" enctype="multipart/form-data">
@@ -63,16 +61,17 @@ HTML_TEMPLATE = """
                 <input type="text" name="student_name" placeholder="Optional">
             </div>
             <div>
-                <label>Rubric / Rules:</label>
-                <textarea name="rubric" rows="4" required placeholder="Enter rubric criteria..."></textarea>
+                <label>Answer Key / Correct Answers:</label>
+                <textarea name="answer_key" rows="4" required placeholder="Enter correct answers or key criteria..."></textarea>
             </div>
             <div>
                 <label>Max Points:</label>
                 <input type="text" name="max_points" value="100" required>
             </div>
             <div>
-                <label>Upload Student Answer Sheet Image:</label>
-                <input type="file" name="image" accept="image/*" required>
+                <label>Capture / Upload Answer Sheet Image:</label>
+                <!-- capture="environment" opens the back camera directly on mobile devices -->
+                <input type="file" name="image" accept="image/*" capture="environment" required>
             </div>
             <button type="submit">Evaluate Answer Sheet</button>
         </form>
@@ -98,12 +97,12 @@ HTML_TEMPLATE = """
         </div>
         {% endif %}
     </div>
-<script>
-    document.querySelector('form').addEventListener('submit', function() {
-        document.getElementById('loading-overlay').style.display = 'block';
-    });
-</script>
 
+    <script>
+        document.querySelector('form').addEventListener('submit', function() {
+            document.getElementById('loading-overlay').style.display = 'block';
+        });
+    </script>
 </body>
 </html>
 """
@@ -124,12 +123,12 @@ def index():
         return render_template_string(HTML_TEMPLATE, error="GROQ_API_KEY environment variable is missing on server.")
 
     student_name = request.form.get("student_name", "Unidentified").strip() or "Unidentified"
-    rubric = request.form.get("rubric", "").strip()
+    answer_key = request.form.get("answer_key", "").strip()
     max_points = request.form.get("max_points", "100").strip()
     file = request.files.get("image")
 
     if not file:
-        return render_template_string(HTML_TEMPLATE, error="Please upload an image file.")
+        return render_template_string(HTML_TEMPLATE, error="Please upload or capture an image file.")
 
     try:
         image = Image.open(file.stream).convert("RGB")
@@ -140,10 +139,10 @@ def index():
         return render_template_string(HTML_TEMPLATE, error=f"Image processing failed: {str(e)}")
 
     prompt = f"""
-You are an expert automated grading assistant. Evaluate the provided student response against the rubric.
+You are an expert automated grading assistant. Evaluate the provided student response against the answer key.
 
-### Rubric / Rules:
-{rubric}
+### Answer Key / Correct Answers:
+{answer_key}
 
 ### Maximum Score:
 {max_points} Points
@@ -181,7 +180,7 @@ The JSON must follow this exact structure:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
             f.write(f"\n========================================\n")
             f.write(f"TIMESTAMP: {timestamp}\n")
             f.write(f"STUDENT: {student_name}\n")
