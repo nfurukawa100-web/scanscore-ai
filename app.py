@@ -2,7 +2,7 @@ import os
 import base64
 from io import BytesIO
 from datetime import datetime
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, redirect, url_for, send_file
 from groq import Groq
 from PIL import Image
 
@@ -11,7 +11,7 @@ app = Flask(__name__)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-LOG_FILE = "grades_record.txt"
+LOG_FILE = "grades_record.csv"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -22,14 +22,24 @@ HTML_TEMPLATE = """
     <title>ScanScore AI</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .container { max-width: 850px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         h1 { text-align: center; color: #0056b3; }
         form { display: flex; flex-direction: column; gap: 15px; }
         label { font-weight: bold; }
         input[type="text"], input[type="file"], textarea { width: 100%; padding: 8px; box-sizing: border-box; }
         button { background-color: #0056b3; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #003d82; }
-        .result, .history { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
+        .result { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; word-break: break-word; }
+        .history { margin-top: 30px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #0056b3; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .action-group { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+        .export-btn { background-color: #28a745; padding: 10px 15px; font-size: 14px; text-decoration: none; color: white; border-radius: 4px; text-align: center; display: inline-block; }
+        .export-btn:hover { background-color: #218838; }
+        .clear-btn { background-color: #dc3545; padding: 10px 15px; font-size: 14px; }
+        .clear-btn:hover { background-color: #bd2130; }
         .error { color: red; font-weight: bold; }
         
         #loading-overlay {
@@ -61,7 +71,6 @@ HTML_TEMPLATE = """
             </div>
             <div>
                 <label>Student Name:</label>
-                <!-- Clears out automatically for the next student, while subject & key stay -->
                 <input type="text" id="student_name" name="student_name" placeholder="Optional student name">
             </div>
             <div>
@@ -82,7 +91,7 @@ HTML_TEMPLATE = """
         {% if result %}
         <div class="result">
             <h2>Evaluation Result</h2>
-            <p>{{ result }}</p>
+            <p><strong>Score Output:</strong> {{ result }}</p>
         </div>
         {% endif %}
 
@@ -93,33 +102,50 @@ HTML_TEMPLATE = """
         </div>
         {% endif %}
 
-        {% if history %}
         <div class="history">
             <h2>Recent Grading Records</h2>
-            <pre>{{ history }}</pre>
+            {% if history_rows %}
+            <table>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Subject</th>
+                    <th>Student</th>
+                    <th>Score</th>
+                </tr>
+                {% for row in history_rows %}
+                <tr>
+                    <td>{{ row[0] }}</td>
+                    <td>{{ row[1] }}</td>
+                    <td>{{ row[2] }}</td>
+                    <td>{{ row[3] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            <div class="action-group">
+                <a href="/download" class="export-btn">📥 Save Records to File (CSV)</a>
+                <form action="/clear" method="post" style="display:inline;">
+                    <button type="submit" class="clear-btn" onclick="return confirm('Are you sure you want to clear all history records?');">Clear History</button>
+                </form>
+            </div>
+            {% else %}
+            <p>No records found yet.</p>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
 
     <script>
-        // Save Subject, Answer Key, and Max Points so they persist across multiple student papers
         const subjectInput = document.getElementById('subject');
         const answerKeyInput = document.getElementById('answer_key');
         const maxPointsInput = document.getElementById('max_points');
-        const studentNameInput = document.getElementById('student_name');
 
-        // Load saved values on page load
         if (localStorage.getItem('saved_subject')) subjectInput.value = localStorage.getItem('saved_subject');
         if (localStorage.getItem('saved_answer_key')) answerKeyInput.value = localStorage.getItem('saved_answer_key');
         if (localStorage.getItem('saved_max_points')) maxPointsInput.value = localStorage.getItem('saved_max_points');
 
         document.getElementById('grade-form').addEventListener('submit', function() {
-            // Save current answer key and subject to local storage before submitting
             localStorage.setItem('saved_subject', subjectInput.value);
             localStorage.setItem('saved_answer_key', answerKeyInput.value);
             localStorage.setItem('saved_max_points', maxPointsInput.value);
-
-            // Show loading overlay
             document.getElementById('loading-overlay').style.display = 'block';
         });
     </script>
@@ -127,20 +153,26 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def load_history():
+    rows = []
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split(";")
+                    if len(parts) == 4:
+                        rows.append(parts)
+        except Exception:
+            pass
+    return rows[::-1]
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "GET":
-        history_data = ""
-        if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    history_data = f.read()
-            except Exception:
-                history_data = ""
-        return render_template_string(HTML_TEMPLATE, history=history_data)
+        return render_template_string(HTML_TEMPLATE, history_rows=load_history())
 
     if not client:
-        return render_template_string(HTML_TEMPLATE, error="GROQ_API_KEY environment variable is missing on server.")
+        return render_template_string(HTML_TEMPLATE, error="GROQ_API_KEY environment variable is missing on server.", history_rows=load_history())
 
     subject = request.form.get("subject", "General").strip() or "General"
     student_name = request.form.get("student_name", "Unidentified").strip() or "Unidentified"
@@ -149,7 +181,7 @@ def index():
     file = request.files.get("image")
 
     if not file:
-        return render_template_string(HTML_TEMPLATE, error="Please upload or capture an image file.")
+        return render_template_string(HTML_TEMPLATE, error="Please upload or capture an image file.", history_rows=load_history())
 
     try:
         image = Image.open(file.stream).convert("RGB")
@@ -157,7 +189,7 @@ def index():
         image.save(buffered, format="JPEG")
         base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
     except Exception as e:
-        return render_template_string(HTML_TEMPLATE, error=f"Image processing failed: {str(e)}")
+        return render_template_string(HTML_TEMPLATE, error=f"Image processing failed: {str(e)}", history_rows=load_history())
 
     prompt = f"""
 You are an expert automated grading assistant. Evaluate the provided student response against the answer key.
@@ -172,15 +204,7 @@ You are an expert automated grading assistant. Evaluate the provided student res
 {max_points} Points
 
 ### Output Format Requirement:
-Return ONLY a raw JSON object with no explanations, markdown code blocks, or extra text.
-
-The JSON must follow this exact structure:
-{{
-  "student_name": "{student_name}",
-  "subject": "{subject}",
-  "date": "YYYY-MM-DD",
-  "final_score": "Total Score (e.g. 18/20)"
-}}
+Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, markdown code blocks, or extra text.
 """
 
     try:
@@ -200,35 +224,34 @@ The JSON must follow this exact structure:
             temperature=0.2
         )
 
-        grading_result = response.choices[0].message.content
+        grading_result = response.choices[0].message.content.strip()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"\n========================================\n")
-            f.write(f"TIMESTAMP: {timestamp}\n")
-            f.write(f"SUBJECT: {subject} | STUDENT: {student_name}\n")
-            f.write(f"----------------------------------------\n")
-            f.write(f"RECORD: {grading_result}\n")
-            f.write(f"========================================\n")
+            f.write(f"{timestamp};{subject};{student_name};{grading_result}\n")
             f.flush()
             os.fsync(f.fileno())
 
-        history_data = ""
-        if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                history_data = f.read()
-
-        return render_template_string(HTML_TEMPLATE, result=grading_result, history=history_data)
+        return render_template_string(HTML_TEMPLATE, result=grading_result, history_rows=load_history())
 
     except Exception as e:
-        history_data = "No records found yet."
-        if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    history_data = f.read()
-            except Exception:
-                pass
-        return render_template_string(HTML_TEMPLATE, error=str(e), history=history_data)
+        return render_template_string(HTML_TEMPLATE, error=str(e), history_rows=load_history())
+
+@app.route("/download", methods=["GET"])
+def download_records():
+    if os.path.exists(LOG_FILE):
+        return send_file(LOG_FILE, as_attachment=True, download_name="grades_export.csv")
+    return redirect(url_for('index'))
+
+@app.route("/clear", methods=["POST"])
+def clear_history():
+    if os.path.exists(LOG_FILE):
+        try:
+            os.remove(LOG_FILE)
+        except Exception:
+            pass
+    return redirect(url_for('index'))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
