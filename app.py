@@ -32,9 +32,29 @@ HTML_TEMPLATE = """
         button:hover { background-color: #003d82; }
         .result, .history { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
         .error { color: red; font-weight: bold; }
+        #loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 100%;
+    background: rgba(255, 255, 255, 0.9);
+    z-index: 9999;
+    text-align: center;
+    padding-top: 35vh;
+    font-size: 22px;
+    font-weight: bold;
+    color: #0056b3;
+}
+
     </style>
 </head>
 <body>
+    <div id="loading-overlay">
+    ⏳ Evaluating Answer Sheet...<br>
+    <span style="font-size: 14px; font-weight: normal; color: #666;">Please wait, AI is scanning the image...</span>
+</div>
     <div class="container">
         <h1>ScanScore AI Automated Grading</h1>
         <form action="/" method="post" enctype="multipart/form-data">
@@ -78,6 +98,12 @@ HTML_TEMPLATE = """
         </div>
         {% endif %}
     </div>
+<script>
+    document.querySelector('form').addEventListener('submit', function() {
+        document.getElementById('loading-overlay').style.display = 'block';
+    });
+</script>
+
 </body>
 </html>
 """
