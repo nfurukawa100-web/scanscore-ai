@@ -1,4 +1,5 @@
 import os
+import csv
 import base64
 from io import BytesIO
 from datetime import datetime
@@ -158,10 +159,11 @@ def load_history():
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split(";")
-                    if len(parts) == 4:
-                        rows.append(parts)
+                reader = csv.reader(f)
+                header = next(reader, None)  # Skip header row
+                for row in reader:
+                    if len(row) == 4:
+                        rows.append(row)
         except Exception:
             pass
     return rows[::-1]
@@ -227,9 +229,15 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
         grading_result = response.choices[0].message.content.strip()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        file_exists = os.path.exists(LOG_FILE)
         os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{timestamp};{subject};{student_name};{grading_result}\n")
+        
+        # Save structured CSV with headers using Python's csv module
+        with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Subject", "Student Name", "Score"])
+            writer.writerow([timestamp, subject, student_name, grading_result])
             f.flush()
             os.fsync(f.fileno())
 
