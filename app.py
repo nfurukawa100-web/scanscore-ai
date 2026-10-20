@@ -70,7 +70,6 @@ HTML_TEMPLATE = """
             </div>
             <div>
                 <label>Capture / Upload Answer Sheet Image:</label>
-                <!-- capture="environment" opens the back camera directly on mobile devices -->
                 <input type="file" name="image" accept="image/*" capture="environment" required>
             </div>
             <button type="submit">Evaluate Answer Sheet</button>
@@ -177,33 +176,10 @@ The JSON must follow this exact structure:
         )
 
         grading_result = response.choices[0].message.content
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime
 
-        os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            f.write(f"\n========================================\n")
-            f.write(f"TIMESTAMP: {timestamp}\n")
-            f.write(f"STUDENT: {student_name}\n")
-            f.write(f"----------------------------------------\n")
-            f.write(f"RECORD: {grading_result}\n")
-            f.write(f"========================================\n")
-            f.flush()
-            os.fsync(f.fileno())
 
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            history_data = f.read()
 
-        return render_template_string(HTML_TEMPLATE, result=grading_result, history=history_data)
 
-    except Exception as e:
-        history_data = "No records found yet."
-        if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    history_data = f.read()
-            except Exception:
-                pass
-        return render_template_string(HTML_TEMPLATE, error=str(e), history=history_data)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
