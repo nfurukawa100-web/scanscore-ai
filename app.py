@@ -8,7 +8,6 @@ from PIL import Image
 
 app = Flask(__name__)
 
-# Initialize Groq client using environment variable
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
@@ -176,10 +175,34 @@ The JSON must follow this exact structure:
         )
 
         grading_result = response.choices[0].message.content
-        timestamp = datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"\n========================================\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"STUDENT: {student_name}\n")
+            f.write(f"----------------------------------------\n")
+            f.write(f"RECORD: {grading_result}\n")
+            f.write(f"========================================\n")
+            f.flush()
+            os.fsync(f.fileno())
 
+        history_data = ""
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                history_data = f.read()
 
+        return render_template_string(HTML_TEMPLATE, result=grading_result, history=history_data)
 
+    except Exception as e:
+        history_data = "No records found yet."
+        if os.path.exists(LOG_FILE):
+            try:
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    history_data = f.read()
+            except Exception:
+                pass
+        return render_template_string(HTML_TEMPLATE, error=str(e), history=history_data)
 
-
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
