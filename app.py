@@ -54,18 +54,23 @@ HTML_TEMPLATE = """
 
     <div class="container">
         <h1>ScanScore AI Automated Grading</h1>
-        <form action="/" method="post" enctype="multipart/form-data">
+        <form id="grade-form" action="/" method="post" enctype="multipart/form-data">
+            <div>
+                <label>Subject Name:</label>
+                <input type="text" id="subject" name="subject" placeholder="e.g., Mathematics 10" required>
+            </div>
             <div>
                 <label>Student Name:</label>
-                <input type="text" name="student_name" placeholder="Optional">
+                <!-- Clears out automatically for the next student, while subject & key stay -->
+                <input type="text" id="student_name" name="student_name" placeholder="Optional student name">
             </div>
             <div>
                 <label>Answer Key / Correct Answers:</label>
-                <textarea name="answer_key" rows="4" required placeholder="Enter correct answers or key criteria..."></textarea>
+                <textarea id="answer_key" name="answer_key" rows="4" required placeholder="Enter correct answers or key criteria..."></textarea>
             </div>
             <div>
                 <label>Max Points:</label>
-                <input type="text" name="max_points" value="100" required>
+                <input type="text" id="max_points" name="max_points" value="100" required>
             </div>
             <div>
                 <label>Capture / Upload Answer Sheet Image:</label>
@@ -97,7 +102,24 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        document.querySelector('form').addEventListener('submit', function() {
+        // Save Subject, Answer Key, and Max Points so they persist across multiple student papers
+        const subjectInput = document.getElementById('subject');
+        const answerKeyInput = document.getElementById('answer_key');
+        const maxPointsInput = document.getElementById('max_points');
+        const studentNameInput = document.getElementById('student_name');
+
+        // Load saved values on page load
+        if (localStorage.getItem('saved_subject')) subjectInput.value = localStorage.getItem('saved_subject');
+        if (localStorage.getItem('saved_answer_key')) answerKeyInput.value = localStorage.getItem('saved_answer_key');
+        if (localStorage.getItem('saved_max_points')) maxPointsInput.value = localStorage.getItem('saved_max_points');
+
+        document.getElementById('grade-form').addEventListener('submit', function() {
+            // Save current answer key and subject to local storage before submitting
+            localStorage.setItem('saved_subject', subjectInput.value);
+            localStorage.setItem('saved_answer_key', answerKeyInput.value);
+            localStorage.setItem('saved_max_points', maxPointsInput.value);
+
+            // Show loading overlay
             document.getElementById('loading-overlay').style.display = 'block';
         });
     </script>
@@ -120,6 +142,7 @@ def index():
     if not client:
         return render_template_string(HTML_TEMPLATE, error="GROQ_API_KEY environment variable is missing on server.")
 
+    subject = request.form.get("subject", "General").strip() or "General"
     student_name = request.form.get("student_name", "Unidentified").strip() or "Unidentified"
     answer_key = request.form.get("answer_key", "").strip()
     max_points = request.form.get("max_points", "100").strip()
@@ -139,6 +162,9 @@ def index():
     prompt = f"""
 You are an expert automated grading assistant. Evaluate the provided student response against the answer key.
 
+### Subject:
+{subject}
+
 ### Answer Key / Correct Answers:
 {answer_key}
 
@@ -151,7 +177,7 @@ Return ONLY a raw JSON object with no explanations, markdown code blocks, or ext
 The JSON must follow this exact structure:
 {{
   "student_name": "{student_name}",
-  "subject": "Subject Name (or General)",
+  "subject": "{subject}",
   "date": "YYYY-MM-DD",
   "final_score": "Total Score (e.g. 18/20)"
 }}
@@ -180,7 +206,7 @@ The JSON must follow this exact structure:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"\n========================================\n")
             f.write(f"TIMESTAMP: {timestamp}\n")
-            f.write(f"STUDENT: {student_name}\n")
+            f.write(f"SUBJECT: {subject} | STUDENT: {student_name}\n")
             f.write(f"----------------------------------------\n")
             f.write(f"RECORD: {grading_result}\n")
             f.write(f"========================================\n")
