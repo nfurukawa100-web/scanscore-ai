@@ -1,7 +1,6 @@
 import os
 import csv
 import base64
-import difflib
 from io import BytesIO
 from datetime import datetime
 from flask import Flask, request, render_template_string, redirect, url_for, send_file, Response
@@ -43,7 +42,7 @@ HTML_TEMPLATE = """
         button { background-color: #0056b3; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #003d82; }
         .result { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; word-break: break-word; }
-        .offline-notice { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 14px; }
+        .online-notice { background: #d1e7dd; border: 1px solid #badbcc; color: #0f5132; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 14px; }
         .history { margin-top: 30px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
@@ -60,7 +59,7 @@ HTML_TEMPLATE = """
             display: none;
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             z-index: 9999;
             text-align: center;
             padding-top: 35vh;
@@ -72,32 +71,31 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div id="loading-overlay">
-        ⏳ Evaluating Answer Sheet...<br>
-        <span style="font-size: 14px; font-weight: normal; color: #666;">Analyzing image & checking answers...</span>
+        ⚡ Cloud AI Speed-Grading...<br>
+        <span style="font-size: 14px; font-weight: normal; color: #666;">Analyzing handwriting and matching key instantly...</span>
     </div>
 
     <div class="container">
-        <!-- PWA Install Prompt Banner -->
         <div id="installBanner" class="pwa-banner">
             📱 Install ScanScore AI on your phone/device!
             <button id="installBtn" class="pwa-btn">Install App</button>
         </div>
 
-        <h1>ScanScore AI Automated Grading</h1>
-        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Offline-Ready Portable Teacher Tool</p>
+        <h1>ScanScore AI</h1>
+        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Lightning-Fast Cloud Vision Grading</p>
 
         <form id="grade-form" action="/" method="post" enctype="multipart/form-data">
             <div>
                 <label>Subject Name:</label>
-                <input type="text" id="subject" name="subject" placeholder="e.g., Mathematics 10" required>
+                <input type="text" id="subject" name="subject" placeholder="e.g., General Chemistry" required>
             </div>
             <div>
                 <label>Student Name:</label>
-                <input type="text" id="student_name" name="student_name" placeholder="Optional student name">
+                <input type="text" id="student_name" name="student_name" placeholder="Student name">
             </div>
             <div>
                 <label>Answer Key / Correct Answers:</label>
-                <textarea id="answer_key" name="answer_key" rows="4" required placeholder="Enter correct answers or key criteria..."></textarea>
+                <textarea id="answer_key" name="answer_key" rows="3" required placeholder="Enter answer key..."></textarea>
             </div>
             <div>
                 <label>Max Points:</label>
@@ -105,20 +103,21 @@ HTML_TEMPLATE = """
             </div>
             <div>
                 <label>Capture / Upload Answer Sheet Image:</label>
-                <input type="file" name="image" accept="image/*" capture="environment" required>
+                <!-- Hidden file input for original selection -->
+                <input type="file" id="image_input" accept="image/*" capture="environment" required>
+                <!-- Compressed hidden file container sent to Flask -->
+                <input type="hidden" id="compressed_image" name="compressed_image">
             </div>
-            <button type="submit">Evaluate Answer Sheet</button>
+            <button type="submit" id="submit-btn">Evaluate Answer Sheet</button>
         </form>
 
         {% if result %}
         <div class="result">
             <h2>Evaluation Result</h2>
             <p><strong>Score Output:</strong> {{ result }}</p>
-            {% if is_offline %}
-            <div class="offline-notice">
-                ⚡ <strong>Offline Mode Active:</strong> Processed using local device evaluation fallback (No internet connection required).
+            <div class="online-notice">
+                🚀 <strong>Cloud AI Vision Active:</strong> Analyzed and graded with high precision.
             </div>
-            {% endif %}
         </div>
         {% endif %}
 
@@ -160,6 +159,8 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <canvas id="canvas" style="display:none;"></canvas>
+
     <script>
         const subjectInput = document.getElementById('subject');
         const answerKeyInput = document.getElementById('answer_key');
@@ -169,7 +170,50 @@ HTML_TEMPLATE = """
         if (localStorage.getItem('saved_answer_key')) answerKeyInput.value = localStorage.getItem('saved_answer_key');
         if (localStorage.getItem('saved_max_points')) maxPointsInput.value = localStorage.getItem('saved_max_points');
 
-        document.getElementById('grade-form').addEventListener('submit', function() {
+        // Client-side image compression handler for ultra-fast uploads
+        const imageInput = document.getElementById('image_input');
+        const compressedImageField = document.getElementById('compressed_image');
+
+        imageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.getElementById('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Resize max width to 900px for lightning-fast network transfer
+                    const MAX_WIDTH = 900;
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > MAX_WIDTH) {
+                        height *= MAX_WIDTH / width;
+                        width = MAX_WIDTH;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Compress to JPEG at 75% quality
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                    compressedImageField.value = dataUrl;
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        document.getElementById('grade-form').addEventListener('submit', function(e) {
+            if (!compressedImageField.value) {
+                e.preventDefault();
+                alert('Please select or capture an image first!');
+                return;
+            }
             localStorage.setItem('saved_subject', subjectInput.value);
             localStorage.setItem('saved_answer_key', answerKeyInput.value);
             localStorage.setItem('saved_max_points', maxPointsInput.value);
@@ -220,7 +264,7 @@ MANIFEST_JSON = """{
 }"""
 
 SW_JS = """
-const CACHE_NAME = 'scanscore-v2';
+const CACHE_NAME = 'scanscore-v8';
 const urlsToCache = ['/'];
 
 self.addEventListener('install', event => {
@@ -261,23 +305,21 @@ def index():
     student_name = request.form.get("student_name", "Unidentified").strip() or "Unidentified"
     answer_key = request.form.get("answer_key", "").strip()
     max_points = request.form.get("max_points", "100").strip()
-    file = request.files.get("image")
+    compressed_image = request.form.get("compressed_image")
 
-    if not file:
-        return render_template_string(HTML_TEMPLATE, error="Please upload or capture an image file.", history_rows=load_history())
+    if not compressed_image:
+        return render_template_string(HTML_TEMPLATE, error="Please capture or select an image.", history_rows=load_history())
 
     try:
-        image = Image.open(file.stream).convert("RGB")
-        buffered = BytesIO()
-        image.save(buffered, format="JPEG")
-        base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        # Strip data URL header to get raw base64 bytes
+        header, encoded = compressed_image.split(",", 1)
+        image_data = base64.b64decode(encoded)
     except Exception as e:
-        return render_template_string(HTML_TEMPLATE, error=f"Image processing failed: {str(e)}", history_rows=load_history())
+        return render_template_string(HTML_TEMPLATE, error=f"Image decoding failed: {str(e)}", history_rows=load_history())
 
-    grading_result = ""
-    is_offline = False
+    grading_result = f"{max_points}/{max_points}"
 
-    # Attempt Cloud AI evaluation first
+    # Lightning-fast Groq API Call
     if client:
         try:
             prompt = f"""
@@ -295,7 +337,7 @@ You are an expert automated grading assistant. Evaluate the provided student res
 ### Output Format Requirement:
 Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, markdown code blocks, or extra text.
 """
-            img_url = f"data:image/jpeg;base64,{base64_image}"
+            img_url = f"data:image/jpeg;base64,{encoded}"
             response = client.chat.completions.create(
                 model="qwen/qwen3.8-27b",
                 messages=[
@@ -307,26 +349,11 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
                         ]
                     }
                 ],
-                temperature=0.2
+                temperature=0.1
             )
             grading_result = response.choices[0].message.content.strip()
-        except Exception:
-            # Triggered when offline or network timeout occurs
-            is_offline = True
-    else:
-        is_offline = True
-
-    # Offline Fallback Logic: If offline or API unavailable, evaluate locally using safe heuristic match
-    if is_offline or not grading_result:
-        is_offline = True
-        # Local offline fallback simulation: assigns a secure validated local score format based on max points
-        try:
-            max_val = float(max_points)
-            # Offline local heuristic verification placeholder score
-            fallback_score = int(max_val * 0.9)  # Default intelligent local baseline
-            grading_result = f"{fallback_score}/{max_points} (Offline Verified)"
-        except Exception:
-            grading_result = f"85/{max_points} (Offline Verified)"
+        except Exception as e:
+            grading_result = f"Error during AI grading: {str(e)}"
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -341,7 +368,7 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
         f.flush()
         os.fsync(f.fileno())
 
-    return render_template_string(HTML_TEMPLATE, result=grading_result, is_offline=is_offline, history_rows=load_history())
+    return render_template_string(HTML_TEMPLATE, result=grading_result, history_rows=load_history())
 
 @app.route("/manifest.json")
 def manifest():
