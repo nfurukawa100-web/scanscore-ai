@@ -3,7 +3,7 @@ import csv
 import base64
 from io import BytesIO
 from datetime import datetime
-from flask import Flask, request, render_template_string, redirect, url_for, send_file
+from flask import Flask, request, render_template_string, redirect, url_for, send_file, Response
 from groq import Groq
 from PIL import Image
 
@@ -21,10 +21,21 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ScanScore AI</title>
+    
+    <!-- PWA Settings -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0056b3">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ScanScore AI">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3429/3429149.png">
+
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
         .container { max-width: 850px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { text-align: center; color: #0056b3; }
+        h1 { text-align: center; color: #0056b3; margin-bottom: 5px; }
+        .pwa-banner { display: none; background: #e7f3ff; border: 1px solid #b6d4fe; color: #084298; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-weight: bold; }
+        .pwa-btn { background-color: #28a745; color: white; border: none; padding: 6px 12px; margin-left: 10px; border-radius: 4px; cursor: pointer; font-size: 14px; }
         form { display: flex; flex-direction: column; gap: 15px; }
         label { font-weight: bold; }
         input[type="text"], input[type="file"], textarea { width: 100%; padding: 8px; box-sizing: border-box; }
@@ -60,11 +71,19 @@ HTML_TEMPLATE = """
 <body>
     <div id="loading-overlay">
         ⏳ Evaluating Answer Sheet...<br>
-        <span style="font-size: 14px; font-weight: normal; color: #666;">Please wait, AI is scanning the image...</span>
+        <span style="font-size: 14px; font-weight: normal; color: #666;">Please wait, scanning the image...</span>
     </div>
 
     <div class="container">
+        <!-- PWA Install Prompt Banner -->
+        <div id="installBanner" class="pwa-banner">
+            📱 Install ScanScore AI on your phone/device!
+            <button id="installBtn" class="pwa-btn">Install App</button>
+        </div>
+
         <h1>ScanScore AI Automated Grading</h1>
+        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Teacher-Friendly Portable Grading Tool</p>
+
         <form id="grade-form" action="/" method="post" enctype="multipart/form-data">
             <div>
                 <label>Subject Name:</label>
@@ -135,6 +154,7 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
+        // Form & LocalStorage Logic
         const subjectInput = document.getElementById('subject');
         const answerKeyInput = document.getElementById('answer_key');
         const maxPointsInput = document.getElementById('max_points');
@@ -149,9 +169,73 @@ HTML_TEMPLATE = """
             localStorage.setItem('saved_max_points', maxPointsInput.value);
             document.getElementById('loading-overlay').style.display = 'block';
         });
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('Service Worker Registered!', reg))
+                .catch(err => console.log('Service Worker Registration Failed!', err));
+        }
+
+        // PWA Installation Banner Trigger
+        let deferredPrompt;
+        const installBanner = document.getElementById('installBanner');
+        const installBtn = document.getElementById('installBtn');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installBanner.style.display = 'block';
+        });
+
+        installBtn.addEventListener('click', () => {
+            installBanner.style.display = 'none';
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then((choiceResult) => {
+                    deferredPrompt = null;
+                });
+            }
+        });
     </script>
 </body>
 </html>
+"""
+
+MANIFEST_JSON = """{
+  "short_name": "ScanScore AI",
+  "name": "ScanScore AI Automated Grading",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3429/3429149.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#f4f4f9",
+  "theme_color": "#0056b3",
+  "display": "standalone",
+  "orientation": "portrait"
+}"""
+
+SW_JS = """
+const CACHE_NAME = 'scanscore-v1';
+const urlsToCache = ['/'];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request).then(response => {
+      return response || fetch(event.request);
+    })
+  );
+});
 """
 
 def load_history():
@@ -160,7 +244,7 @@ def load_history():
         try:
             with open(LOG_FILE, "r", encoding="utf-8") as f:
                 reader = csv.reader(f)
-                header = next(reader, None)  # Skip header row
+                header = next(reader, None)
                 for row in reader:
                     if len(row) == 4:
                         rows.append(row)
@@ -232,7 +316,6 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
         file_exists = os.path.exists(LOG_FILE)
         os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
         
-        # Save structured CSV with headers using Python's csv module
         with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
@@ -245,6 +328,14 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
 
     except Exception as e:
         return render_template_string(HTML_TEMPLATE, error=str(e), history_rows=load_history())
+
+@app.route("/manifest.json")
+def manifest():
+    return Response(MANIFEST_JSON, mimetype="application/json")
+
+@app.route("/sw.js")
+def service_worker():
+    return Response(SW_JS, mimetype="application/javascript")
 
 @app.route("/download", methods=["GET"])
 def download_records():
