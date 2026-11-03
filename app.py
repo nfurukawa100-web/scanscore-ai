@@ -2,7 +2,7 @@ import os
 import csv
 import base64
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Flask, request, render_template_string, redirect, url_for, send_file, Response
 from groq import Groq
 from PIL import Image
@@ -42,9 +42,10 @@ HTML_TEMPLATE = """
         button { background-color: #0056b3; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #003d82; }
         .result { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; word-break: break-word; }
+        .feedback-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin-top: 10px; border-radius: 4px; font-size: 14px; }
         .online-notice { background: #d1e7dd; border: 1px solid #badbcc; color: #0f5132; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 14px; }
         .history { margin-top: 30px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #0056b3; color: white; }
         tr:nth-child(even) { background-color: #f9f9f9; }
@@ -71,8 +72,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div id="loading-overlay">
-        ⚡ Cloud AI Speed-Grading...<br>
-        <span style="font-size: 14px; font-weight: normal; color: #666;">Analyzing handwriting and matching key instantly...</span>
+        ⚡ Cloud AI Speed-Grading & Analysis...<br>
+        <span style="font-size: 14px; font-weight: normal; color: #666;">Extracting score and pinpointing mistakes...</span>
     </div>
 
     <div class="container">
@@ -82,12 +83,12 @@ HTML_TEMPLATE = """
         </div>
 
         <h1>ScanScore AI</h1>
-        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Lightning-Fast Cloud Vision Grading</p>
+        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Philippine Time (PHT) Classroom Grading Assistant</p>
 
         <form id="grade-form" action="/" method="post" enctype="multipart/form-data">
             <div>
                 <label>Subject Name:</label>
-                <input type="text" id="subject" name="subject" placeholder="e.g., General Chemistry" required>
+                <input type="text" id="subject" name="subject" placeholder="e.g., General Mathematics" required>
             </div>
             <div>
                 <label>Student Name:</label>
@@ -95,7 +96,7 @@ HTML_TEMPLATE = """
             </div>
             <div>
                 <label>Answer Key / Correct Answers:</label>
-                <textarea id="answer_key" name="answer_key" rows="3" required placeholder="Enter answer key..."></textarea>
+                <textarea id="answer_key" name="answer_key" rows="3" required placeholder="Enter correct answers or grading criteria..."></textarea>
             </div>
             <div>
                 <label>Max Points:</label>
@@ -103,20 +104,24 @@ HTML_TEMPLATE = """
             </div>
             <div>
                 <label>Capture / Upload Answer Sheet Image:</label>
-                <!-- Hidden file input for original selection -->
                 <input type="file" id="image_input" accept="image/*" capture="environment" required>
-                <!-- Compressed hidden file container sent to Flask -->
                 <input type="hidden" id="compressed_image" name="compressed_image">
             </div>
-            <button type="submit" id="submit-btn">Evaluate Answer Sheet</button>
+            <button type="submit" id="submit-btn">Evaluate & Check Mistakes</button>
         </form>
 
         {% if result %}
         <div class="result">
             <h2>Evaluation Result</h2>
-            <p><strong>Score Output:</strong> {{ result }}</p>
+            <p style="font-size: 18px;"><strong>Score Output:</strong> <span style="color: #28a745;">{{ result }}</span></p>
+            {% if feedback %}
+            <div class="feedback-box">
+                <strong>🔍 Where Student Made Mistakes / Teacher Notes:</strong>
+                <p style="margin: 5px 0 0 0;">{{ feedback }}</p>
+            </div>
+            {% endif %}
             <div class="online-notice">
-                🚀 <strong>Cloud AI Vision Active:</strong> Analyzed and graded with high precision.
+                🚀 <strong>Cloud AI Vision Active:</strong> Analyzed in Philippine Standard Time (PHT).
             </div>
         </div>
         {% endif %}
@@ -129,14 +134,15 @@ HTML_TEMPLATE = """
         {% endif %}
 
         <div class="history">
-            <h2>Recent Grading Records</h2>
+            <h2>Recent Grading Records (PHT)</h2>
             {% if history_rows %}
             <table>
                 <tr>
-                    <th>Timestamp</th>
+                    <th>Timestamp (PHT)</th>
                     <th>Subject</th>
                     <th>Student</th>
                     <th>Score</th>
+                    <th>Mistake Breakdown</th>
                 </tr>
                 {% for row in history_rows %}
                 <tr>
@@ -144,6 +150,7 @@ HTML_TEMPLATE = """
                     <td>{{ row[1] }}</td>
                     <td>{{ row[2] }}</td>
                     <td>{{ row[3] }}</td>
+                    <td>{{ row[4] if row|length > 4 else 'N/A' }}</td>
                 </tr>
                 {% endfor %}
             </table>
@@ -170,7 +177,6 @@ HTML_TEMPLATE = """
         if (localStorage.getItem('saved_answer_key')) answerKeyInput.value = localStorage.getItem('saved_answer_key');
         if (localStorage.getItem('saved_max_points')) maxPointsInput.value = localStorage.getItem('saved_max_points');
 
-        // Client-side image compression handler for ultra-fast uploads
         const imageInput = document.getElementById('image_input');
         const compressedImageField = document.getElementById('compressed_image');
 
@@ -185,7 +191,6 @@ HTML_TEMPLATE = """
                     const canvas = document.getElementById('canvas');
                     const ctx = canvas.getContext('2d');
                     
-                    // Resize max width to 900px for lightning-fast network transfer
                     const MAX_WIDTH = 900;
                     let width = img.width;
                     let height = img.height;
@@ -199,7 +204,6 @@ HTML_TEMPLATE = """
                     canvas.height = height;
                     ctx.drawImage(img, 0, 0, width, height);
                     
-                    // Compress to JPEG at 75% quality
                     const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
                     compressedImageField.value = dataUrl;
                 }
@@ -264,7 +268,7 @@ MANIFEST_JSON = """{
 }"""
 
 SW_JS = """
-const CACHE_NAME = 'scanscore-v8';
+const CACHE_NAME = 'scanscore-v9';
 const urlsToCache = ['/'];
 
 self.addEventListener('install', event => {
@@ -290,7 +294,7 @@ def load_history():
                 reader = csv.reader(f)
                 header = next(reader, None)
                 for row in reader:
-                    if len(row) == 4:
+                    if len(row) >= 4:
                         rows.append(row)
         except Exception:
             pass
@@ -311,15 +315,15 @@ def index():
         return render_template_string(HTML_TEMPLATE, error="Please capture or select an image.", history_rows=load_history())
 
     try:
-        # Strip data URL header to get raw base64 bytes
         header, encoded = compressed_image.split(",", 1)
         image_data = base64.b64decode(encoded)
     except Exception as e:
         return render_template_string(HTML_TEMPLATE, error=f"Image decoding failed: {str(e)}", history_rows=load_history())
 
     grading_result = f"{max_points}/{max_points}"
+    feedback_text = "Standard evaluation completed."
 
-    # Lightning-fast Groq API Call
+    # Groq API Request with Itemized Mistake Breakdown
     if client:
         try:
             prompt = f"""
@@ -335,7 +339,12 @@ You are an expert automated grading assistant. Evaluate the provided student res
 {max_points} Points
 
 ### Output Format Requirement:
-Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, markdown code blocks, or extra text.
+Return your response in two parts separated strictly by a vertical pipe symbol (`|`):
+Part 1: The final score only (e.g., 18/20 or 95/100).
+Part 2: A clear, concise breakdown explaining specifically where the student made mistakes or lost points.
+
+Example format:
+18/20 | Lost 2 points on question 3 due to an incorrect final calculation step.
 """
             img_url = f"data:image/jpeg;base64,{encoded}"
             response = client.chat.completions.create(
@@ -351,11 +360,22 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
                 ],
                 temperature=0.1
             )
-            grading_result = response.choices[0].message.content.strip()
+            raw_output = response.choices[0].message.content.strip()
+            
+            if "|" in raw_output:
+                parts = raw_output.split("|", 1)
+                grading_result = parts[0].strip()
+                feedback_text = parts[1].strip()
+            else:
+                grading_result = raw_output
+                feedback_text = "Reviewed successfully."
         except Exception as e:
-            grading_result = f"Error during AI grading: {str(e)}"
+            grading_result = f"Error"
+            feedback_text = f"AI grading failed: {str(e)}"
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Philippine Standard Time (PHT: UTC+8)
+    ph_timezone = timezone(timedelta(hours=8))
+    timestamp = datetime.now(ph_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
     file_exists = os.path.exists(LOG_FILE)
     os.makedirs(os.path.dirname(os.path.abspath(LOG_FILE)), exist_ok=True)
@@ -363,12 +383,12 @@ Return ONLY the final score format (e.g. 18/20 or 95/100) with no explanations, 
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["Timestamp", "Subject", "Student Name", "Score"])
-        writer.writerow([timestamp, subject, student_name, grading_result])
+            writer.writerow(["Timestamp (PHT)", "Subject", "Student Name", "Score", "Mistake Breakdown"])
+        writer.writerow([timestamp, subject, student_name, grading_result, feedback_text])
         f.flush()
         os.fsync(f.fileno())
 
-    return render_template_string(HTML_TEMPLATE, result=grading_result, history_rows=load_history())
+    return render_template_string(HTML_TEMPLATE, result=grading_result, feedback=feedback_text, history_rows=load_history())
 
 @app.route("/manifest.json")
 def manifest():
@@ -381,7 +401,7 @@ def service_worker():
 @app.route("/download", methods=["GET"])
 def download_records():
     if os.path.exists(LOG_FILE):
-        return send_file(LOG_FILE, as_attachment=True, download_name="grades_export.csv")
+        return send_file(LOG_FILE, as_attachment=True, download_name="grades_export_pht.csv")
     return redirect(url_for('index'))
 
 @app.route("/clear", methods=["POST"])
