@@ -42,7 +42,7 @@ HTML_TEMPLATE = """
         button { background-color: #0056b3; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #003d82; }
         .result { margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 4px; word-break: break-word; }
-        .feedback-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin-top: 10px; border-radius: 4px; font-size: 14px; }
+        .feedback-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin-top: 10px; border-radius: 4px; font-size: 14px; max-height: 250px; overflow-y: auto; }
         .online-notice { background: #d1e7dd; border: 1px solid #badbcc; color: #0f5132; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 14px; }
         .history { margin-top: 30px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
@@ -72,8 +72,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div id="loading-overlay">
-        ⚡ Cloud AI Speed-Grading & Analysis...<br>
-        <span style="font-size: 14px; font-weight: normal; color: #666;">Extracting score and pinpointing mistakes...</span>
+        ⚡ Scanning 50-Item Test Sheet...<br>
+        <span style="font-size: 14px; font-weight: normal; color: #666;">Analyzing high-res grid and matching answers...</span>
     </div>
 
     <div class="container">
@@ -83,31 +83,31 @@ HTML_TEMPLATE = """
         </div>
 
         <h1>ScanScore AI</h1>
-        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">Philippine Time (PHT) Classroom Grading Assistant</p>
+        <p style="text-align: center; font-size: 13px; color: #666; margin-top: 0;">High-Capacity 50-Item Batch Grading (PHT)</p>
 
         <form id="grade-form" action="/" method="post" enctype="multipart/form-data">
             <div>
                 <label>Subject Name:</label>
-                <input type="text" id="subject" name="subject" placeholder="e.g., General Mathematics" required>
+                <input type="text" id="subject" name="subject" placeholder="e.g., Midterm Exam - 50 Items" required>
             </div>
             <div>
                 <label>Student Name:</label>
                 <input type="text" id="student_name" name="student_name" placeholder="Student name">
             </div>
             <div>
-                <label>Answer Key / Correct Answers:</label>
-                <textarea id="answer_key" name="answer_key" rows="3" required placeholder="Enter correct answers or grading criteria..."></textarea>
+                <label>Answer Key (1-50):</label>
+                <textarea id="answer_key" name="answer_key" rows="4" required placeholder="Enter answer key (e.g. 1. A 2. C 3. B ... or comma-separated)"></textarea>
             </div>
             <div>
                 <label>Max Points:</label>
-                <input type="text" id="max_points" name="max_points" value="100" required>
+                <input type="text" id="max_points" name="max_points" value="50" required>
             </div>
             <div>
-                <label>Capture / Upload Answer Sheet Image:</label>
+                <label>Capture / Upload Answer Sheet Image (High-Res):</label>
                 <input type="file" id="image_input" accept="image/*" capture="environment" required>
                 <input type="hidden" id="compressed_image" name="compressed_image">
             </div>
-            <button type="submit" id="submit-btn">Evaluate & Check Mistakes</button>
+            <button type="submit" id="submit-btn">Evaluate 50-Item Sheet</button>
         </form>
 
         {% if result %}
@@ -116,12 +116,12 @@ HTML_TEMPLATE = """
             <p style="font-size: 18px;"><strong>Score Output:</strong> <span style="color: #28a745;">{{ result }}</span></p>
             {% if feedback %}
             <div class="feedback-box">
-                <strong>🔍 Where Student Made Mistakes / Teacher Notes:</strong>
-                <p style="margin: 5px 0 0 0;">{{ feedback }}</p>
+                <strong>🔍 Detailed Itemized Mistake Breakdown (1-50):</strong>
+                <p style="margin: 5px 0 0 0; white-space: pre-line;">{{ feedback }}</p>
             </div>
             {% endif %}
             <div class="online-notice">
-                🚀 <strong>Cloud AI Vision Active:</strong> Analyzed in Philippine Standard Time (PHT).
+                🚀 <strong>High-Res Vision Active:</strong> Processed 50 items successfully in PHT.
             </div>
         </div>
         {% endif %}
@@ -191,7 +191,8 @@ HTML_TEMPLATE = """
                     const canvas = document.getElementById('canvas');
                     const ctx = canvas.getContext('2d');
                     
-                    const MAX_WIDTH = 900;
+                    // Increased to 1400px so 50-item text is crystal clear for the AI
+                    const MAX_WIDTH = 1400;
                     let width = img.width;
                     let height = img.height;
                     
@@ -204,7 +205,8 @@ HTML_TEMPLATE = """
                     canvas.height = height;
                     ctx.drawImage(img, 0, 0, width, height);
                     
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                    // Higher quality (85%) for dense 50-item sheets
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
                     compressedImageField.value = dataUrl;
                 }
                 img.src = event.target.result;
@@ -268,7 +270,7 @@ MANIFEST_JSON = """{
 }"""
 
 SW_JS = """
-const CACHE_NAME = 'scanscore-v9';
+const CACHE_NAME = 'scanscore-v10';
 const urlsToCache = ['/'];
 
 self.addEventListener('install', event => {
@@ -308,7 +310,7 @@ def index():
     subject = request.form.get("subject", "General").strip() or "General"
     student_name = request.form.get("student_name", "Unidentified").strip() or "Unidentified"
     answer_key = request.form.get("answer_key", "").strip()
-    max_points = request.form.get("max_points", "100").strip()
+    max_points = request.form.get("max_points", "50").strip()
     compressed_image = request.form.get("compressed_image")
 
     if not compressed_image:
@@ -320,19 +322,19 @@ def index():
     except Exception as e:
         return render_template_string(HTML_TEMPLATE, error=f"Image decoding failed: {str(e)}", history_rows=load_history())
 
-    grading_result = f"{max_points}/{max_points}"
-    feedback_text = "Standard evaluation completed."
+    grading_result = f"0/{max_points}"
+    feedback_text = "Evaluation completed."
 
-    # Groq API Request with Itemized Mistake Breakdown
+    # Groq API Request tuned for high-density 50-item sheets with extended output tokens
     if client:
         try:
             prompt = f"""
-You are an expert automated grading assistant. Evaluate the provided student response against the answer key.
+You are an expert automated grading assistant grading a high-density test paper with up to 50 items. Carefully compare the student's written answers in the image against the provided answer key.
 
 ### Subject:
 {subject}
 
-### Answer Key / Correct Answers:
+### Answer Key (1 to {max_points}):
 {answer_key}
 
 ### Maximum Score:
@@ -340,11 +342,11 @@ You are an expert automated grading assistant. Evaluate the provided student res
 
 ### Output Format Requirement:
 Return your response in two parts separated strictly by a vertical pipe symbol (`|`):
-Part 1: The final score only (e.g., 18/20 or 95/100).
-Part 2: A clear, concise breakdown explaining specifically where the student made mistakes or lost points.
+Part 1: The final score only (e.g., 42/50 or 50/50).
+Part 2: A list of specifically which item numbers the student got wrong and brief notes on the incorrect answers.
 
 Example format:
-18/20 | Lost 2 points on question 3 due to an incorrect final calculation step.
+45/50 | Incorrect items: #12 (answered B, correct is A), #28 (blank), #41 (miscalculated).
 """
             img_url = f"data:image/jpeg;base64,{encoded}"
             response = client.chat.completions.create(
@@ -358,7 +360,8 @@ Example format:
                         ]
                     }
                 ],
-                temperature=0.1
+                temperature=0.1,
+                max_tokens=1500  # Allows enough output length for 50 items breakdown
             )
             raw_output = response.choices[0].message.content.strip()
             
@@ -368,7 +371,7 @@ Example format:
                 feedback_text = parts[1].strip()
             else:
                 grading_result = raw_output
-                feedback_text = "Reviewed successfully."
+                feedback_text = "50-item evaluation completed."
         except Exception as e:
             grading_result = f"Error"
             feedback_text = f"AI grading failed: {str(e)}"
